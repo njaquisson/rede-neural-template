@@ -69,17 +69,38 @@ Isso permite trocar a fonte de dados (ex.: memória → banco de dados) **sem al
 
 ---
 
+## Persistência do Modelo
+
+O modelo treinado é **persistido em disco** e pode ser **carregado posteriormente** sem necessidade de re-treinar. A responsabilidade fica isolada em `src/infrastructure/ml/ModelPersistenceService.js`:
+
+| Operação | Quando ocorre | Responsável |
+|---|---|---|
+| **Salvar** | Após `model.fit()`, o modelo é gravado em `./saved_models/modelo_v1` (arquivos `model.json` + `weights.bin`) | `TrainUseCase` → `ModelPersistenceService.save()` |
+| **Carregar** | Antes de prever, o modelo é lido do disco com `tf.loadLayersModel()` | `PredictUseCase` → `ModelPersistenceService.load()` |
+| **Verificar** | Checa se `model.json` existe antes de carregar | `ModelPersistenceService.exists()` |
+
+Pontos importantes:
+
+- O **diretório de destino é criado automaticamente** caso não exista (`fs.mkdirSync(..., { recursive: true })`).
+- O `PredictUseCase` **não re-treina**: carrega o modelo salvo. Se ele não existir, o erro orienta o usuário a executar `npm run train` primeiro.
+- No TensorFlow.js Node, o carregamento via `file://` deve apontar **diretamente para o arquivo `model.json`** (não para o diretório), ao contrário do salvamento.
+- A pasta `saved_models/` está no `.gitignore` para evitar que binários de pesos pesados sejam enviados ao GitHub.
+
+---
+
 ## Estrutura do Projeto
 
 ```
 rede-neural-template/
-├── index.js                              # Bootstrap → chama main() em src/
+├── index.js                              # Bootstrap → executa o fluxo combinado (src/index.js)
 ├── package.json                          # Dependências e scripts
 ├── README.md                             # Documentação
 └── src/
-    ├── index.js                          # Composição (wiring) e ponto de entrada
+    ├── index.js                          # Fluxo combinado: treina + persiste + prediz
+    ├── train.js                          # Entry point: somente treinamento (npm run train)
+    ├── predict.js                        # Entry point: somente predição (npm run predict)
     ├── config/
-    │   └── index.js                      # CONFIG: hiperparâmetros e nomes das classes
+    │   └── index.js                      # CONFIG: hiperparâmetros, classes e caminho do modelo
     ├── domain/
     │   ├── entities/
     │   │   ├── Person.js                 # Entidade Pessoa (nome, idade, cor, localização)
@@ -94,13 +115,14 @@ rede-neural-template/
     │   ├── dto/
     │   │   └── TrainingDataDTO.js        # Transferência de dados de treino
     │   └── use-cases/
-    │       ├── TrainUseCase.js           # Caso de uso: treinar o modelo
-    │       └── PredictUseCase.js         # Caso de uso: prever categoria
+    │       ├── TrainUseCase.js           # Caso de uso: treinar e persistir o modelo
+    │       └── PredictUseCase.js         # Caso de uso: carregar modelo e prever categoria
     └── infrastructure/
         ├── data/
         │   └── InMemoryTrainingRepository.js # Repository em memória (dataset de exemplo)
         ├── ml/
-        │   └── ModelFactory.js           # Factory Pattern: criação do modelo TensorFlow
+        │   ├── ModelFactory.js           # Factory Pattern: criação do modelo TensorFlow
+        │   └── ModelPersistenceService.js # Persistência: salvar/carregar modelo em disco
         ├── encoding/
         │   └── FeatureEncoder.js         # Normalização + one-hot encoding
         └── presentation/
@@ -147,6 +169,8 @@ export const CONFIG = Object.freeze({
     LABEL_NAMES: ["premium", "medium", "basic"], // Nomes das categorias
     AGE_MIN: 25,             // Faixa usada na normalização da idade
     AGE_MAX: 40,
+    MODEL_SAVE_PATH: './saved_models/modelo_v1', // Caminho do modelo salvo em disco
+    MODEL_SAVE_URL: 'file://./saved_models/modelo_v1', // URL file:// exigida pelo TF.js Node
 });
 ```
 
@@ -154,6 +178,7 @@ export const CONFIG = Object.freeze({
 - **Mais features** → aumente `INPUT_FEATURES` e ajuste o `FeatureEncoder`.
 - **Mais categorias** → aumente `OUTPUT_CLASSES` e adicione nomes em `LABEL_NAMES`.
 - **Mais complexidade** → adicione camadas em `src/infrastructure/ml/ModelFactory.js`.
+- **Mudar onde o modelo é salvo** → altere `MODEL_SAVE_PATH` e `MODEL_SAVE_URL` de forma coordenada.
 
 ### 4. Entenda a codificação dos dados
 
@@ -173,24 +198,49 @@ Toda entrada precisa ser **numérica**. As regras ficam em `src/infrastructure/e
 
 ### 5. Configure a predição
 
-No ponto de entrada `src/index.js`, crie uma `Person` com os atributos desejados. A codificação e a normalização são aplicadas automaticamente pelo `FeatureEncoder`:
+No entry point `src/predict.js`, crie uma `Person` com os atributos desejados. O `PredictUseCase` carrega o modelo **já salvo em disco** (não re-treina) e o `FeatureEncoder` aplica automaticamente a codificação e a normalização:
 
 ```js
-const pessoa = new Person('Zé', 28, 'verde', 'Curitiba'); // idade 28, cor verde, Curitiba
+const encoder = new FeatureEncoder(CONFIG.AGE_MIN, CONFIG.AGE_MAX);
+const predictUseCase = new PredictUseCase(encoder);
 
-const predictUseCase = new PredictUseCase(model, encoder);
+const pessoa = new Person('Zé', 28, 'verde', 'Curitiba'); // idade 28, cor verde, Curitiba
 const resultados = await predictUseCase.execute(pessoa);
 
 ResultPresenter.exibir(pessoa.nome, resultados);
 ```
 
+> **Importante**: se não existir um modelo salvo em disco, a predição falha com um erro orientando a executar o treinamento primeiro.
+
 ### 6. Execute
 
-```bash
-npm start
+Os scripts estão definidos no `package.json`:
+
+```json
+"scripts": {
+    "start": "TF_CPP_MIN_LOG_LEVEL=2 node --no-warnings --watch index.js",
+    "train": "TF_CPP_MIN_LOG_LEVEL=2 node --no-warnings src/train.js",
+    "predict": "TF_CPP_MIN_LOG_LEVEL=2 node --no-warnings src/predict.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+}
 ```
 
-O modelo é treinado e a previsão do exemplo é exibida no terminal, ordenada por probabilidade:
+| Comando | Quando/por que executar |
+|---|---|
+| **`npm start`** | Executa o **fluxo completo**: treina o modelo, persiste em disco e em seguida faz uma predição de exemplo. Ideal para validar rapidamente todo o pipeline de ponta a ponta. |
+| **`npm run train`** | Executa **somente o treinamento**, salvando o modelo em `./saved_models/modelo_v1`. Use quando você alterou o dataset (`#seedData`) ou os hiperparâmetros (`CONFIG`) e precisa gerar/atualizar o modelo no disco. |
+| **`npm run predict`** | Executa **somente a predição**, carregando o modelo já salvo em disco. Use quando o modelo já foi treinado e você deseja apenas classificar uma nova pessoa — sem re-treinar. |
+| **`npm test`** | Placeholder (nenhum teste implementado). |
+
+**Fluxo típico de uso**:
+
+```bash
+npm install          # primeira vez
+npm run train        # 1) treina e salva o modelo
+npm run predict      # 2) carrega o modelo salvo e prevê
+```
+
+Exemplo de saída da predição (ordenada por probabilidade):
 
 ```
 Previsão para Zé: [
@@ -209,6 +259,7 @@ Previsão para Zé: [
 - **Conectar um banco de dados** → crie uma nova classe que estenda `TrainingDataRepository` e injete-a no `TrainUseCase`. Nenhuma outra camada precisa mudar.
 - **Interface web** → o `ResultPresenter` pode ser substituído por um componente que envie os dados a uma UI.
 - **Tornar o domínio genérico** → abstrair `Person`/`Category` para classes parametrizáveis, permitindo reutilizar o template para qualquer problema de classificação.
+- **Outras estratégias de persistência** → criar uma nova implementação que siga o contrato do `ModelPersistenceService` (ex.: salvar em nuvem, banco de dados ou localStorage no navegador).
 
 ---
 

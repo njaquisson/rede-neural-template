@@ -16,6 +16,9 @@ yarn-error.log*
 dist/
 build/
 
+# Modelos salvos (binários pesados de pesos)
+saved_models/
+
 # Arquivos temporários
 *.tmp
 *.swp

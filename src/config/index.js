@@ -6,4 +6,8 @@ export const CONFIG = Object.freeze({
     LABEL_NAMES: Object.freeze(["premium", "medium", "basic"]),
     AGE_MIN: 25,
     AGE_MAX: 40,
+    // Caminho relativo da pasta/arquivo onde o modelo é salvo em disco.
+    MODEL_SAVE_PATH: './saved_models/modelo_v1',
+    // URL no formato exigido pelo TensorFlow.js Node (file://).
+    MODEL_SAVE_URL: 'file://./saved_models/modelo_v1',
 });

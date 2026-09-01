@@ -1,13 +1,16 @@
 import { CONFIG } from '../../config/index.js';
 import { TrainingDataDTO } from '../dto/TrainingDataDTO.js';
+import { ModelPersistenceService } from '../../infrastructure/ml/ModelPersistenceService.js';
 
 export class TrainUseCase {
     #repository;
     #modelFactory;
+    #persistence;
 
-    constructor(repository, modelFactory) {
+    constructor(repository, modelFactory, persistence = new ModelPersistenceService()) {
         this.#repository = repository;
         this.#modelFactory = modelFactory;
+        this.#persistence = persistence;
     }
 
     async execute() {
@@ -17,6 +20,9 @@ export class TrainUseCase {
         const model = this.#modelFactory.create();
 
         await this.#train(model, xs, ys);
+
+        // Persiste o modelo treinado em disco (model.json + pesos .bin)
+        await this.#persistence.save(model);
 
         return model;
     }
